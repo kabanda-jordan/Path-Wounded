@@ -1,0 +1,38 @@
+[project]
+id = "path-wounded"
+
+[functions.auth]
+verify_jwt = false
+
+[functions.orders]
+verify_jwt = false
+
+[functions.carriers]
+verify_jwt = false
+
+[functions.vehicles]
+verify_jwt = false
+
+[functions.invoices]
+verify_jwt = false
+
+[functions.partners]
+verify_jwt = false
+
+[functions.messages]
+verify_jwt = false
+
+[functions.automations]
+verify_jwt = false
+
+[functions.notifications]
+verify_jwt = false
+
+[functions.analytics]
+verify_jwt = false
+
+[functions.reporting]
+verify_jwt = false
+
+[functions.users]
+verify_jwt = false

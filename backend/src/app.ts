@@ -23,8 +23,19 @@ import reportingRoutes from './modules/reporting/reporting.routes.js'
 
 const app = express()
 
+const allowedOrigins = env.CORS_ORIGIN.split(',').map((o) => o.trim())
+
 app.use(helmet({ contentSecurityPolicy: false }))
-app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }))
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true)
+    } else {
+      callback(new Error('Not allowed by CORS'))
+    }
+  },
+  credentials: true,
+}))
 app.use(express.json({ limit: '10mb' }))
 app.use(cookieParser())
 

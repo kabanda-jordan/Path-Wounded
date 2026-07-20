@@ -15,7 +15,8 @@ export async function login(req: Request, res: Response) {
   res.cookie('refreshToken', result.refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    path: '/',
     maxAge: 30 * 24 * 60 * 60 * 1000,
   })
 
@@ -32,7 +33,8 @@ export async function refresh(req: Request, res: Response) {
   res.cookie('refreshToken', result.refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    path: '/',
     maxAge: 30 * 24 * 60 * 60 * 1000,
   })
 
@@ -44,7 +46,12 @@ export async function logout(req: Request, res: Response) {
   if (token) {
     try { await authService.logout(token) } catch { /* token may already be revoked */ }
   }
-  res.clearCookie('refreshToken')
+  res.clearCookie('refreshToken', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    path: '/',
+  })
   return sendSuccess(res, { message: 'Logged out successfully' })
 }
 
