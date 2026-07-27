@@ -7,7 +7,9 @@ const corsHeaders = {
 
 export function handleCors(req: Request): Response | null {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders })
+    const origin = req.headers.get("origin")
+    const headers = corsHeadersWithOrigin(origin)
+    return new Response("ok", { headers })
   }
   return null
 }

@@ -297,12 +297,11 @@ async function resendOtp(req: Request) {
   })
 
   // Send email (non-blocking)
-  sendOtpEmail(user.email, otpCode, user.full_name).catch((err) =>
-    console.error("OTP resend email failed:", err)
-  )
+  const emailResult = sendOtpEmail(user.email, otpCode, user.full_name)
+  emailResult.catch((err: unknown) => console.error("OTP resend email failed:", err))
 
   return sendSuccess(req, {
-    message: emailSent ? "New verification code sent to your email" : "Failed to send email. Please try again.",
+    message: "New verification code sent to your email",
     email: user.email,
   })
 }
