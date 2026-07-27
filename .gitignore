@@ -47,3 +47,5 @@ backend/prisma/migrations/
 # Misc
 *.local
 coverage/
+.vercel
+.env*

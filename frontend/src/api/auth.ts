@@ -6,12 +6,26 @@ export interface LoginResponse {
   user: User
 }
 
+export interface OtpPendingResponse {
+  pendingToken: string
+  requiresOtp: boolean
+  email: string
+  fullName: string
+  message: string
+}
+
 export const authApi = {
   signup: (data: { email: string; password: string; fullName: string; companyName?: string }) =>
     api.post<ApiResponse<{ user: { id: string; email: string; fullName: string; role: string } }>>('/auth/signup', data),
 
   login: (data: { email: string; password: string }) =>
-    api.post<ApiResponse<LoginResponse>>('/auth/login', data),
+    api.post<ApiResponse<OtpPendingResponse>>('/auth/login', data),
+
+  verifyOtp: (data: { pendingToken: string; code: string }) =>
+    api.post<ApiResponse<LoginResponse>>('/auth/verify-otp', data),
+
+  resendOtp: (data: { pendingToken: string }) =>
+    api.post<ApiResponse<{ message: string; email: string }>>('/auth/resend-otp', data),
 
   refresh: () =>
     api.post<ApiResponse<{ accessToken: string }>>('/auth/refresh'),

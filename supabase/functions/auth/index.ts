@@ -4,6 +4,7 @@ import { authenticate, getOrigin } from "../_shared/middleware.ts"
 import { sendSuccess, sendError } from "../_shared/response.ts"
 import { handleCors } from "../_shared/cors.ts"
 import { signAccessToken } from "../_shared/jwt.ts"
+import { generateOtpCode, sendOtpEmail } from "../_shared/email.ts"
 
 const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*]).{8,}$/
 
@@ -17,6 +18,8 @@ Deno.serve(async (req) => {
   try {
     if (req.method === "POST" && path === "/signup") return await signup(req)
     if (req.method === "POST" && path === "/login") return await login(req)
+    if (req.method === "POST" && path === "/verify-otp") return await verifyOtp(req)
+    if (req.method === "POST" && path === "/resend-otp") return await resendOtp(req)
     if (req.method === "POST" && path === "/refresh") return await refresh(req)
     if (req.method === "POST" && path === "/logout") return await logout(req)
     if (req.method === "GET" && path === "/me") return await me(req)
@@ -100,13 +103,137 @@ async function login(req: Request) {
     return sendError(req, 401, "INVALID_CREDENTIALS", "Invalid email or password")
   }
 
-  const accessToken = signAccessToken({ userId: user.id, email: user.email, role: user.role })
+  // Generate OTP for 2FA
+  const otpCode = generateOtpCode()
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString() // 5 minutes
+
+  // Invalidate any existing OTPs for this user
+  await supabase
+    .from("otp_codes")
+    .update({ verified: true })
+    .eq("user_id", user.id)
+    .eq("verified", false)
+    .eq("purpose", "login")
+
+  // Store new OTP
+  const { error: otpError } = await supabase.from("otp_codes").insert({
+    user_id: user.id,
+    code: otpCode,
+    purpose: "login",
+    expires_at: expiresAt,
+  })
+
+  if (otpError) {
+    console.error("OTP store error:", otpError)
+    return sendError(req, 500, "INTERNAL_ERROR", "Failed to generate verification code")
+  }
+
+  // Send OTP email (non-blocking - don't await)
+  sendOtpEmail(user.email, otpCode, user.full_name).catch((err) =>
+    console.error("OTP email failed:", err)
+  )
+
+  // Generate a short-lived pending token (not the real access token)
+  const pendingToken = await signAccessToken({
+    userId: user.id,
+    email: user.email,
+    role: user.role,
+    purpose: "otp_pending",
+    otpExp: Math.floor(Date.now() / 1000) + 5 * 60,
+  })
+
+  await supabase.from("audit_logs").insert({ user_id: user.id, action: "OTP_SENT", ip_address: ip, metadata: { email } })
+
+  return sendSuccess(req, {
+    pendingToken,
+    requiresOtp: true,
+    email: user.email,
+    fullName: user.full_name,
+    message: "Verification code sent to your email",
+  })
+}
+
+async function verifyOtp(req: Request) {
+  const body = await req.json()
+  const { pendingToken, code } = body
+  const ip = req.headers.get("x-forwarded-for") || req.headers.get("cf-connecting-ip") || "unknown"
+
+  if (!pendingToken || !code) {
+    return sendError(req, 400, "VALIDATION_ERROR", "pendingToken and code are required")
+  }
+
+  if (!/^\d{8}$/.test(code)) {
+    return sendError(req, 400, "VALIDATION_ERROR", "Code must be exactly 8 digits")
+  }
+
+  // Verify the pending token
+  const { verifyAccessToken } = await import("../_shared/jwt.ts")
+  const payload = await verifyAccessToken(pendingToken)
+  if (!payload || (payload as Record<string, unknown>).purpose !== "otp_pending") {
+    return sendError(req, 401, "INVALID_TOKEN", "Invalid or expired verification session")
+  }
+
+  // Check if the OTP has expired (token-level check)
+  const otpExp = (payload as Record<string, unknown>).otpExp as number
+  if (!otpExp || otpExp < Math.floor(Date.now() / 1000)) {
+    return sendError(req, 401, "OTP_EXPIRED", "Verification session has expired. Please login again.")
+  }
+
+  const supabase = getSupabaseServiceRole()
+
+  // Find the stored OTP
+  const { data: otpRecord } = await supabase
+    .from("otp_codes")
+    .select("*")
+    .eq("user_id", payload.userId)
+    .eq("purpose", "login")
+    .eq("verified", false)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single()
+
+  if (!otpRecord) {
+    return sendError(req, 401, "OTP_NOT_FOUND", "No pending verification found. Please login again.")
+  }
+
+  // Check expiry
+  if (new Date(otpRecord.expires_at) < new Date()) {
+    return sendError(req, 401, "OTP_EXPIRED", "Verification code has expired. Please login again.")
+  }
+
+  // Check attempts
+  if (otpRecord.attempts >= 5) {
+    await supabase.from("otp_codes").update({ verified: true }).eq("id", otpRecord.id)
+    return sendError(req, 429, "OTP_MAX_ATTEMPTS", "Too many failed attempts. Please login again.")
+  }
+
+  // Increment attempts
+  await supabase.from("otp_codes").update({ attempts: otpRecord.attempts + 1 }).eq("id", otpRecord.id)
+
+  // Verify code
+  if (otpRecord.code !== code) {
+    return sendError(req, 401, "OTP_INVALID", `Invalid verification code. ${5 - otpRecord.attempts - 1} attempts remaining.`)
+  }
+
+  // Mark OTP as verified
+  await supabase.from("otp_codes").update({ verified: true }).eq("id", otpRecord.id)
+
+  // Get full user data
+  const { data: user } = await supabase.from("users").select("*").eq("id", payload.userId).single()
+  if (!user) {
+    return sendError(req, 404, "USER_NOT_FOUND", "User not found")
+  }
+
+  // Generate real access token
+  const accessToken = await signAccessToken({ userId: user.id, email: user.email, role: user.role })
+
+  // Generate refresh token
   const refreshTokenValue = generateToken()
   const tokenHash = await hashToken(refreshTokenValue)
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+  const refreshExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
 
-  await supabase.from("refresh_tokens").insert({ user_id: user.id, token_hash: tokenHash, expires_at: expiresAt })
-  await supabase.from("audit_logs").insert({ user_id: user.id, action: "LOGIN_SUCCESS", ip_address: ip })
+  await supabase.from("refresh_tokens").insert({ user_id: user.id, token_hash: tokenHash, expires_at: refreshExpiresAt })
+  await supabase.from("audit_logs").insert({ user_id: user.id, action: "LOGIN_SUCCESS", ip_address: ip, metadata: { method: "otp_verified" } })
 
   const headers = getOrigin(req)
   headers["Set-Cookie"] = `refreshToken=${refreshTokenValue}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${30 * 24 * 60 * 60}`
@@ -121,6 +248,63 @@ async function login(req: Request) {
     }),
     { status: 200, headers }
   )
+}
+
+async function resendOtp(req: Request) {
+  const body = await req.json()
+  const { pendingToken } = body
+
+  if (!pendingToken) {
+    return sendError(req, 400, "VALIDATION_ERROR", "pendingToken is required")
+  }
+
+  const { verifyAccessToken } = await import("../_shared/jwt.ts")
+  const payload = await verifyAccessToken(pendingToken)
+  if (!payload || (payload as Record<string, unknown>).purpose !== "otp_pending") {
+    return sendError(req, 401, "INVALID_TOKEN", "Invalid or expired verification session")
+  }
+
+  const otpExp = (payload as Record<string, unknown>).otpExp as number
+  if (!otpExp || otpExp < Math.floor(Date.now() / 1000)) {
+    return sendError(req, 401, "OTP_EXPIRED", "Verification session has expired. Please login again.")
+  }
+
+  const supabase = getSupabaseServiceRole()
+
+  // Invalidate existing OTPs
+  await supabase
+    .from("otp_codes")
+    .update({ verified: true })
+    .eq("user_id", payload.userId)
+    .eq("verified", false)
+    .eq("purpose", "login")
+
+  // Get user info
+  const { data: user } = await supabase.from("users").select("email, full_name").eq("id", payload.userId).single()
+  if (!user) {
+    return sendError(req, 404, "USER_NOT_FOUND", "User not found")
+  }
+
+  // Generate new OTP
+  const otpCode = generateOtpCode()
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString()
+
+  await supabase.from("otp_codes").insert({
+    user_id: payload.userId,
+    code: otpCode,
+    purpose: "login",
+    expires_at: expiresAt,
+  })
+
+  // Send email (non-blocking)
+  sendOtpEmail(user.email, otpCode, user.full_name).catch((err) =>
+    console.error("OTP resend email failed:", err)
+  )
+
+  return sendSuccess(req, {
+    message: emailSent ? "New verification code sent to your email" : "Failed to send email. Please try again.",
+    email: user.email,
+  })
 }
 
 async function refresh(req: Request) {
@@ -161,7 +345,7 @@ async function refresh(req: Request) {
   await supabase.from("refresh_tokens").insert({ user_id: stored.user_id, token_hash: newHash, expires_at: stored.expires_at })
 
   const user = stored.users
-  const accessToken = signAccessToken({ userId: user.id, email: user.email, role: user.role })
+  const accessToken = await signAccessToken({ userId: user.id, email: user.email, role: user.role })
 
   const headers = getOrigin(req)
   headers["Set-Cookie"] = `refreshToken=${newRefreshValue}; Path=/; HttpOnly; Secure; SameSite=None; Max-Age=${30 * 24 * 60 * 60}`
