@@ -22,9 +22,10 @@ export async function POST(request: NextRequest) {
 
     const response = NextResponse.json(data, { status: 200 })
 
+    const isSecure = process.env.NODE_ENV === 'production'
     response.cookies.set('accessToken', accessToken, {
       httpOnly: true,
-      secure: true,
+      secure: isSecure,
       sameSite: 'lax',
       path: '/',
       maxAge: 15 * 60,
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest) {
       if (match) {
         response.cookies.set('refreshToken', match[1], {
           httpOnly: true,
-          secure: true,
+          secure: isSecure,
           sameSite: 'lax',
           path: '/',
           maxAge: 30 * 24 * 60 * 60,

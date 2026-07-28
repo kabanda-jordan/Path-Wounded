@@ -23,12 +23,6 @@ const api = axios.create({
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401 && typeof window !== 'undefined') {
-      const path = window.location.pathname
-      if (path !== '/login' && path !== '/signup' && !path.startsWith('/auth')) {
-        window.location.href = '/login'
-      }
-    }
     return Promise.reject(error)
   }
 )

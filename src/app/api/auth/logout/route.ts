@@ -18,8 +18,9 @@ export async function POST(request: NextRequest) {
     { status: 200 }
   )
 
-  response.cookies.set('accessToken', '', { httpOnly: true, secure: true, sameSite: 'lax', path: '/', maxAge: 0 })
-  response.cookies.set('refreshToken', '', { httpOnly: true, secure: true, sameSite: 'lax', path: '/', maxAge: 0 })
+  const isSecure = process.env.NODE_ENV === 'production'
+  response.cookies.set('accessToken', '', { httpOnly: true, secure: isSecure, sameSite: 'lax', path: '/', maxAge: 0 })
+  response.cookies.set('refreshToken', '', { httpOnly: true, secure: isSecure, sameSite: 'lax', path: '/', maxAge: 0 })
 
   return response
 }
