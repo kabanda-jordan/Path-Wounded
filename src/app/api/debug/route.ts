@@ -6,10 +6,20 @@ import { cookies } from 'next/headers'
 export async function GET(request: NextRequest) {
   const result: Record<string, unknown> = {}
 
+  result.envCheck = {
+    hasDatabaseUrl: !!process.env.DATABASE_URL,
+    databaseUrlPrefix: process.env.DATABASE_URL?.substring(0, 40) || 'MISSING',
+    hasJwtSecret: !!process.env.JWT_ACCESS_SECRET,
+    jwtSecretLength: process.env.JWT_ACCESS_SECRET?.length || 0,
+    hasEdgeUrl: !!process.env.EDGE_FUNCTION_URL,
+    edgeUrlPrefix: process.env.EDGE_FUNCTION_URL?.substring(0, 50) || 'MISSING',
+    nodeEnv: process.env.NODE_ENV,
+  }
+
   const cookieStore = await cookies()
   const token = cookieStore.get('accessToken')?.value
   result.hasCookie = !!token
-  result.tokenPrefix = token ? token.substring(0, 30) + '...' : null
+  result.tokenPrefix = token ? token.substring(0, 40) + '...' : null
 
   if (!token) {
     result.step = 'NO_COOKIE'
@@ -23,8 +33,6 @@ export async function GET(request: NextRequest) {
 
   if (!payload) {
     result.step = 'JWT_INVALID'
-    result.envHasSecret = !!process.env.JWT_ACCESS_SECRET
-    result.secretLength = process.env.JWT_ACCESS_SECRET?.length || 0
     return Response.json(result)
   }
 
@@ -39,13 +47,6 @@ export async function GET(request: NextRequest) {
   } catch (e: unknown) {
     result.prismaError = e instanceof Error ? e.message : String(e)
     result.step = 'PRISMA_ERROR'
-  }
-
-  result.envCheck = {
-    hasDatabaseUrl: !!process.env.DATABASE_URL,
-    hasJwtSecret: !!process.env.JWT_ACCESS_SECRET,
-    hasEdgeUrl: !!process.env.EDGE_FUNCTION_URL,
-    nodeEnv: process.env.NODE_ENV,
   }
 
   return Response.json(result)
