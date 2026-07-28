@@ -4,6 +4,7 @@ node_modules/
 .pnp.js
 
 # Build output
+.next/
 dist/
 build/
 .vercel/
@@ -43,6 +44,13 @@ backend/prisma/migrations/
 
 # TypeScript
 *.tsbuildinfo
+next-env.d.ts
+
+# Supabase temp
+supabase/.temp/
+
+# Debug functions
+supabase/functions/debug-email/
 
 # Misc
 *.local

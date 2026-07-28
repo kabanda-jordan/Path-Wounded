@@ -1,0 +1,302 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  admin
+  broker
+  carrier
+  dispatcher
+  viewer
+}
+
+enum UserStatus {
+  active
+  suspended
+}
+
+enum OrderStatus {
+  pending
+  assigned
+  in_transit
+  delivered
+  cancelled
+}
+
+enum VehicleType {
+  truck
+  cargo_van
+  trailer
+  cargo_plane
+  other
+}
+
+enum VehicleStatus {
+  active
+  inactive
+  maintenance
+}
+
+enum InvoiceStatus {
+  unpaid
+  paid
+  overdue
+}
+
+enum CarrierStatus {
+  active
+  inactive
+  suspended
+}
+
+enum PartnerType {
+  supplier
+  distributor
+  warehouse
+  customs
+  other
+}
+
+enum TriggerType {
+  order_delivered
+  order_created
+  order_cancelled
+  invoice_overdue
+  payment_received
+}
+
+enum ActionType {
+  send_email
+  send_notification
+  create_invoice
+  update_status
+  send_message
+}
+
+model User {
+  id           String      @id @default(uuid())
+  email        String      @unique
+  passwordHash String      @map("password_hash")
+  fullName     String      @map("full_name")
+  companyName  String?     @map("company_name")
+  role         UserRole    @default(broker)
+  avatarUrl    String?     @map("avatar_url")
+  emailVerified Boolean   @default(false) @map("email_verified")
+  status       UserStatus @default(active)
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+
+  refreshTokens    RefreshToken[]
+  orders           Order[]         @relation("BrokerOrders")
+  reviews          Review[]
+  sentMessages     Message[]       @relation("SentMessages")
+  receivedMessages Message[]       @relation("ReceivedMessages")
+  automations      Automation[]
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("refresh_tokens")
+}
+
+model Carrier {
+  id           String        @id @default(uuid())
+  name         String
+  logoUrl      String?       @map("logo_url")
+  location     String?
+  rating       Float         @default(0)
+  vehicleCount Int           @default(0) @map("vehicle_count")
+  partnerCount Int           @default(0) @map("partner_count")
+  status       CarrierStatus @default(active)
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  vehicles  Vehicle[]
+  orders    Order[]
+  invoices  Invoice[]
+  reviews   Review[]
+  partners  Partner[]
+
+  @@index([status])
+  @@index([rating(sort: Desc)])
+  @@map("carriers")
+}
+
+model Vehicle {
+  id         String        @id @default(uuid())
+  carrierId  String        @map("carrier_id")
+  type       VehicleType
+  identifier String
+  status     VehicleStatus @default(active)
+
+  carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Cascade)
+
+  @@index([carrierId])
+  @@index([type])
+  @@index([status])
+  @@map("vehicles")
+}
+
+model Order {
+  id                String      @id @default(uuid())
+  orderNumber       String      @unique @map("order_number")
+  brokerId          String      @map("broker_id")
+  carrierId         String?     @map("carrier_id")
+  status            OrderStatus @default(pending)
+  originAddress     String      @map("origin_address")
+  destinationAddress String    @map("destination_address")
+  amountPaid        Decimal     @default(0) @map("amount_paid") @db.Decimal(12, 2)
+  hoursOnRoad       Float?      @map("hours_on_road")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+  deliveredAt       DateTime?   @map("delivered_at")
+
+  broker   User      @relation("BrokerOrders", fields: [brokerId], references: [id])
+  carrier  Carrier?  @relation(fields: [carrierId], references: [id])
+  invoices Invoice[]
+
+  @@index([brokerId])
+  @@index([carrierId])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@map("orders")
+}
+
+model Partner {
+  id        String      @id @default(uuid())
+  carrierId String      @map("carrier_id")
+  name      String
+  type      PartnerType
+
+  carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Cascade)
+
+  @@index([carrierId])
+  @@map("partners")
+}
+
+model Invoice {
+  id        String        @id @default(uuid())
+  orderId   String        @map("order_id")
+  carrierId String        @map("carrier_id")
+  amount    Decimal       @db.Decimal(12, 2)
+  status    InvoiceStatus @default(unpaid)
+  dueDate   DateTime      @map("due_date")
+  paidAt    DateTime?     @map("paid_at")
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  order   Order   @relation(fields: [orderId], references: [id])
+  carrier Carrier @relation(fields: [carrierId], references: [id])
+
+  @@index([orderId])
+  @@index([carrierId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("invoices")
+}
+
+model Review {
+  id        String   @id @default(uuid())
+  carrierId String   @map("carrier_id")
+  authorId  String   @map("author_id")
+  orderId   String?  @map("order_id")
+  rating    Int
+  comment   String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Cascade)
+  author  User    @relation(fields: [authorId], references: [id])
+
+  @@unique([authorId, carrierId, orderId])
+  @@index([carrierId])
+  @@index([authorId])
+  @@map("reviews")
+}
+
+model Message {
+  id          String    @id @default(uuid())
+  senderId    String    @map("sender_id")
+  recipientId String    @map("recipient_id")
+  threadId    String    @map("thread_id")
+  body        String
+  readAt      DateTime? @map("read_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  sender    User @relation("SentMessages", fields: [senderId], references: [id])
+  recipient User @relation("ReceivedMessages", fields: [recipientId], references: [id])
+
+  @@index([senderId])
+  @@index([recipientId])
+  @@index([threadId])
+  @@index([createdAt(sort: Desc)])
+  @@map("messages")
+}
+
+model Automation {
+  id         String     @id @default(uuid())
+  userId     String     @map("user_id")
+  name       String
+  triggerType TriggerType @map("trigger_type")
+  actionType  ActionType  @map("action_type")
+  config     Json       @default("{}")
+  isActive   Boolean    @default(true) @map("is_active")
+  createdAt  DateTime   @default(now()) @map("created_at")
+  updatedAt  DateTime   @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isActive])
+  @@map("automations")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  type      String
+  payload   Json
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, readAt])
+  @@index([createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  action    String
+  metadata  Json     @default("{}")
+  ipAddress String?  @map("ip_address")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

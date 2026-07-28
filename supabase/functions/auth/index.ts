@@ -4,7 +4,7 @@ import { authenticate, getOrigin } from "../_shared/middleware.ts"
 import { sendSuccess, sendError } from "../_shared/response.ts"
 import { handleCors } from "../_shared/cors.ts"
 import { signAccessToken } from "../_shared/jwt.ts"
-import { generateOtpCode, sendOtpEmail } from "../_shared/email.ts"
+import { generateOtpCode, sendOtpEmail, sendWelcomeEmail } from "../_shared/email.ts"
 
 const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*]).{8,}$/
 
@@ -71,6 +71,8 @@ async function signup(req: Request) {
   }
 
   await supabase.from("audit_logs").insert({ user_id: user.id, action: "SIGNUP", metadata: { email } })
+
+  sendWelcomeEmail(user.email, fullName, user.role).catch((err: unknown) => console.error("Welcome email failed:", err))
 
   return sendSuccess(req, { user: { id: user.id, email: user.email, fullName: user.full_name, role: user.role } }, 201)
 }
